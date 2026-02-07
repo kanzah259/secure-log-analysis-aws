@@ -1,41 +1,47 @@
-import os
+import boto3
 import json
 from collections import defaultdict
 
-# Get the directory of the current script
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# === CONFIG ===
+INPUT_BUCKET = "secure-log-analysis-logs"    # S3 bucket containing your input log
+OUTPUT_BUCKET = "secure-log-analysis-output" # S3 bucket to save output
+LOG_FILE_LOCAL = "/tmp/sample.log"           # Temporary local file on EC2
+OUTPUT_FILE_LOCAL = "/tmp/output.json"       # Temporary output file on EC2
 
-# Paths to the log file and output
-LOG_FILE = os.path.join(BASE_DIR, "../logs/sample.log")
-OUTPUT_FILE = os.path.join(BASE_DIR, "../logs/output.json")
+# === DOWNLOAD LOG FROM S3 ===
+s3 = boto3.client('s3')
+print(f"Downloading log file from S3 bucket '{INPUT_BUCKET}'...")
+s3.download_file(INPUT_BUCKET, 'sample.log', LOG_FILE_LOCAL)
+print("Download complete.")
 
-#Dictionary to count failed attempts per IP
+# === ANALYSIS ===
 failed_attempts = defaultdict(int)
-
-#Threshold for suspicious activity
 FAILED_THRESHOLD = 2
 
-#Read and parse log file
-with open(LOG_FILE, "r") as file:
+with open(LOG_FILE_LOCAL, "r") as file:
     for line in file:
         parts = line.strip().split()
         if len(parts) < 2:
-            continue #skip malformed lines
+            continue
         ip = parts[0]
         status_code = parts[-1]
-        if status_code == "403": #failed attempt
+        if status_code == "403":
             failed_attempts[ip] += 1
 
-#Build the suspicious IPs list
 suspicious_ips = [
     {"ip": ip, "failed_attempts": count}
     for ip, count in failed_attempts.items()
     if count > FAILED_THRESHOLD
 ]
 
-#Output to JSON
 output = {"suspicious_ips": suspicious_ips}
-with open(OUTPUT_FILE, "w") as f:
+
+# === SAVE OUTPUT LOCALLY AND UPLOAD TO S3 ===
+with open(OUTPUT_FILE_LOCAL, "w") as f:
     json.dump(output, f, indent=4)
 
-print(f"Analysis complete. Results saved to {OUTPUT_FILE}")
+s3.upload_file(OUTPUT_FILE_LOCAL, OUTPUT_BUCKET, 'output.json')
+print(f"Analysis complete. Output uploaded to S3 bucket '{OUTPUT_BUCKET}'.")
+
+# === OPTIONAL DEBUG ===
+print("Suspicious IPs found:", suspicious_ips)
